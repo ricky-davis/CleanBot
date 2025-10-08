@@ -2,21 +2,26 @@
 
 A Discord bot that automatically cleans messages in specified channels after a certain period of time.
 
+<p align="center">
+  <img src="hurdurr.png" alt="CleanerBoi – Meme Logo" width="300">
+</p>
+
 ## Features
 
 - Automatically delete messages in specified channels after a set amount of time.
-- Supports different cleaning intervals for different channels.
-- Commands to enable the cleaner, set cleaning intervals, and manually test the cleaner.
-- Permission checks to ensure only users with specified roles can execute commands.
-- The scheduled cleanup runs every 15 minutes (Default).
-- Limit the amount of inputs to prevent spam/DoS type scenarios.
+- Different cleaning intervals per channel (persisted in `cleaner_state.json`).
+- Manual test runs, including precise ranges like `last5m`, `last1h25m`, `last2d`, etc.
+- Safe **hard stop**: `!disablecleaner` cancels any in-flight deletion and removes the channel’s schedule immediately.
+- Permission checks: only users with specific roles can run commands; bot also verifies it has **Manage Messages** in the target channel.
+- Scheduled cleanup runs every **15 minutes** by default. First run after enabling is delayed by one interval (prevents surprise immediate sweeps).
+- Basic spam protection with command cooldowns.
 
 ## Prerequisites
 
-- A server to run the bot on
-- Python 3.6 or higher
-- Linux system to run the bot (Raspberry Pi or similar)
-- App setup in Discord Developer portal (Scroll down to bottom to see how)
+- A server (e.g. Raspberry Pi) to run the bot
+- **Python 3.10+**
+- Linux recommended (tested on Raspberry Pi OS)
+- A Discord Application & Bot set up in the Discord Developer Portal (see below)
 
 ## Installation
 
@@ -48,7 +53,8 @@ A Discord bot that automatically cleans messages in specified channels after a c
     pipenv install
     ```
 
-6. Create a `.env` file following the format of `.env_example`. Add your DISCORD_BOT_TOKEN accordingly (make sure you have completed the Prerequisites)
+6. Create a `.env` file following the format of `.env_example`.  
+   Add your `DISCORD_BOT_TOKEN` (make sure you’ve completed the Developer Portal setup).
 
 7. Run the bot:
     ```sh
@@ -56,19 +62,20 @@ A Discord bot that automatically cleans messages in specified channels after a c
     ```
 
 ## Running as a Service
-Here are some extra step to run your bot as a service on the server incase of reboot or similiar scenarios.
+
+Run your bot as a systemd service so it restarts on boot/crash.
 
 1. Create a systemd service file:
     ```sh
     sudo nano /etc/systemd/system/discord-cleaner-bot.service
     ```
 
-2. Add the following content to the file, make sure you change `/path/to/your/` to correct directory and username.
+2. Add the following content (change `/path/to/your/` and `your_username`):
     ```ini
     [Unit]
     Description=Discord Cleaner Bot
     After=network.target
-    
+
     [Service]
     Type=simple
     User=your_username
@@ -77,84 +84,115 @@ Here are some extra step to run your bot as a service on the server incase of re
     Restart=on-failure
     StandardOutput=journal
     StandardError=journal
-    
+
     [Install]
     WantedBy=multi-user.target
     ```
 
-3. Reload systemd to recognize the new service:
+3. Reload systemd:
     ```sh
     sudo systemctl daemon-reload
     ```
 
-4. Enable the service to start on boot:
+4. Enable on boot:
     ```sh
     sudo systemctl enable discord-cleaner-bot
     ```
 
-5. Start the service:
+5. Start now:
     ```sh
     sudo systemctl start discord-cleaner-bot
     ```
 
-6. Check the service status:
+6. Check status/logs:
     ```sh
     sudo systemctl status discord-cleaner-bot
+    sudo journalctl -u discord-cleaner-bot -f
     ```
 
 ## Commands
 
-- `!enablecleaner CHANNEL_ID`  
-  Enable the cleaner for a specific channel. The default cleaning interval is 24 hours.
+> **Notes**
+> - Where a channel argument is accepted, you can pass a **channel mention** (e.g. `#general`) or a **channel ID**. If omitted, the command targets the **current channel**.
+> - The bot will refuse to enable cleaning in a channel if it lacks the **Manage Messages** permission there.
+
+- `!enablecleaner [#channel]`  
+  Enable the cleaner for the specified channel (or the current channel if omitted).  
+  Default cleaning interval is **24 hours**.
+
+- `!disablecleaner [#channel]`  
+  Disable the cleaner for the specified/current channel.  
+  **Hard stop:** cancels any ongoing manual or scheduled deletions and removes the schedule immediately.
 
 - `!setcleaningtime HOURS`  
-  Set the cleaning interval for the current channel. `HOURS` must be between 1 and 72.
+  Set the automatic cleaning threshold for the **current** channel.  
+  `HOURS` must be between **1** and **72**.
 
 - `!testcleaner TIME`  
-  Manually test the cleaner in the current channel. `TIME` can be `all` to delete all messages or a number of hours.
-
-- `!checkpermissions`  
-  Check your permissions. This won't show the role name, but it will show your permission ID.
-
-- `!listchannels`  
-  List all channels + channel_id on the current server (discord calls it guild).
+  Manually run a one-off cleanup in the **current** channel. `TIME` can be:
+  - `all` — delete **all** messages in the channel  
+  - A number of hours, e.g. `12` — delete messages **older than** 12 hours  
+  - A “last duration” string: `last<Nd><Nh><Nm>` — delete messages from the **last** duration  
+    - Examples: `last5m`, `last45m`, `last1h25m`, `last2d`  
+  - You can interrupt an in-flight run with `!disablecleaner`.
 
 - `!cleanersetting`  
-  Check if the cleaner is enabled and what the current timer setting is for the current channel. It returns "Cleaner is enabled and timer is set to xx hours" if enabled, otherwise it will state that the cleaner is not enabled for the channel.
+  Show whether the cleaner is enabled for the current channel and the current interval (in hours).
+
+- `!listchannels`  
+  List all text channels and their IDs in the current server (guild).
+
+- `!checkpermissions`  
+  Display your guild permissions (useful for debugging role issues).
 
 - `!cleanerhelp`  
-  Lists all the bot-commands available.
+  Show a summary of all commands.
+
+## How it Works
+
+- The bot stores per-channel settings in `cleaner_state.json`.  
+  On startup, it **validates** those channels exist; any stale IDs are removed from the file automatically.
+- The scheduled sweep runs every **15 minutes**. When you enable a channel, the **first** scheduled sweep is delayed by one interval to prevent accidental immediate deletion.
+- Manual runs (`!testcleaner …`) and scheduled sweeps are **interruptible**: `!disablecleaner` will cancel them mid-scan or mid-delete.
 
 ## Logging
 
-The bot uses systemd journal for logging. To view the logs, use:
+The bot logs to the systemd journal (when run as a service).  
+Tail logs live:
 ```sh
 sudo journalctl -u discord-cleaner-bot -f
 ```
 
+## Discord Developer Portal Setup
 
-## Setup on Discord Developer Portal
-
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications).
-2. Click on "New Application".
-3. Enter a name for your bot and click "Create".
-4. (optional) If you are intending the bot to be private, go to Oauth2 section and flip the install link to "none" and only have "guild install" selected above.
-5. Go to the "Bot" section.
-6. (optional) If you are intending for the bot to be private, untick the "public bot"
-7. Under the "Token" section, click "Copy" to copy your bot token (might need re-generation). This will be used as the `DISCORD_BOT_TOKEN` environment variable.
-8. Under "Privileged Gateway Intents", enable "Message Content Intent".
-9. Save your changes.
+1. Go to the Discord Developer Portal: https://discord.com/developers/applications  
+2. Click **New Application**, name it, and create.  
+3. (Optional) For a private bot, in **OAuth2** set the install to **Guild Install** only.  
+4. Go to the **Bot** tab.  
+5. (Optional) For a private bot, untick **Public Bot**.  
+6. Under **Token**, copy your bot token — this becomes `DISCORD_BOT_TOKEN` in your `.env`.  
+7. Under **Privileged Gateway Intents**, enable **Message Content Intent**.  
+8. Save changes.
 
 ### Invite the Bot to Your Server
 
-1. Go to the "OAuth2" section, then "URL Generator".
-2. Under "SCOPES", select "bot".
-3. Under "BOT PERMISSIONS", select the permissions your bot needs:
-    - `Manage Messages`
-    - `Read Messages`
-    - `Send Messages`
-    - `View Channels`
-    - `Read Message History`
-4. Copy the generated URL and open it in your browser.
-5. Select the server you want to add the bot to and authorize it.
+1. In **OAuth2 → URL Generator**:  
+   - Under **SCOPES**, select **bot**.  
+   - Under **BOT PERMISSIONS**, select:  
+     - `Manage Messages`  
+     - `Read Messages`  
+     - `Send Messages`  
+     - `View Channels`  
+     - `Read Message History`  
+2. Copy the generated URL, open it, choose your server, and authorize.
 
+## Troubleshooting
+
+- **PyNaCl warning:**  
+  If you see `PyNaCl is not installed, voice will NOT be supported` — safe to ignore (this bot doesn’t use voice).
+
+- **No deletions happen:**  
+  Ensure the bot has **Manage Messages** in that channel, and that the cleaner is enabled there (`!cleanersetting`).
+
+- **Accidental long runs:**  
+  Use `!disablecleaner` to halt any in-flight deletions and remove the schedule immediately.
