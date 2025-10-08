@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 import discord
 import os
+import re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -66,6 +67,20 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Dictionary to store cleaning tasks for each channel
 cleaning_tasks = {}
 
+DURATION_RE = re.compile(
+    r"^last(?:(?P<days>\d+)d)?(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?$",
+    re.IGNORECASE
+)
+
+def parse_last_duration(s: str) -> timedelta | None:
+    m = DURATION_RE.match(s.strip())
+    if not m:
+        return None
+    days = int(m.group('days') or 0)
+    hours = int(m.group('hours') or 0)
+    minutes = int(m.group('minutes') or 0)
+    delta = timedelta(days=days, hours=hours, minutes=minutes)
+    return delta if delta.total_seconds() > 0 else None
 
 @bot.event
 async def on_ready():
@@ -134,31 +149,43 @@ def has_moderator_role(ctx):
 
 @bot.command(name='enablecleaner')
 @commands.cooldown(1, DEFAULT_COOLDOWN_SECONDS, commands.BucketType.user)
-async def enable_cleaner(ctx, channel_id: int):
-    if has_moderator_role(ctx):
-        try:
-            # Default to 24 hours
-            state[str(channel_id)] = {'time_to_keep': 24}
-            save_state()
-            if channel_id not in cleaning_tasks:
-                cleaning_tasks[channel_id] = tasks.loop(
-                    minutes=CLEANING_INTERVAL_MINUTES)(clean_old_messages)
-            try:
-                cleaning_tasks[channel_id].start(channel_id)
-            except RuntimeError:
-                logger.warning(
-                    f"Task for channel ID: {channel_id} is already running")
-            await ctx.send(f"Cleaner enabled for channel ID: {channel_id}")
-            logger.info(
-                f"Cleaner enabled for channel ID: {channel_id} by {ctx.author}")
-        except Exception as e:
-            await ctx.send(f"Error enabling cleaner: {e}")
-            logger.error(
-                f"Error enabling cleaner for channel ID: {channel_id}: {e}")
-    else:
+async def enable_cleaner(ctx, channel_id: int = None):
+    if not has_moderator_role(ctx):
         await ctx.send("You do not have the required permissions to use this command.")
-        logger.warning(
-            f"{ctx.author} tried to enable cleaner without required permissions")
+        logger.warning(f"{ctx.author} tried to enable cleaner without required permissions")
+        return
+
+    # default to the channel where the command was run
+    target_channel_id = channel_id or ctx.channel.id
+
+    try:
+        # Optional: sanity-check the bot can delete messages in that channel
+        target_channel = ctx.guild.get_channel(target_channel_id)
+        if target_channel:
+            perms = target_channel.permissions_for(ctx.guild.me)
+            if not perms.manage_messages:
+                await ctx.send("I don’t have **Manage Messages** in that channel, so I won’t be able to clean it.")
+                logger.warning(f"Missing Manage Messages in channel {target_channel_id}")
+                return
+
+        # Default to 24 hours
+        state[str(target_channel_id)] = {'time_to_keep': 24}
+        save_state()
+
+        if target_channel_id not in cleaning_tasks:
+            cleaning_tasks[target_channel_id] = tasks.loop(
+                minutes=CLEANING_INTERVAL_MINUTES)(clean_old_messages)
+        try:
+            cleaning_tasks[target_channel_id].start(target_channel_id)
+        except RuntimeError:
+            logger.warning(f"Task for channel ID: {target_channel_id} is already running")
+
+        await ctx.send(f"Cleaner enabled for channel ID: {target_channel_id}")
+        logger.info(f"Cleaner enabled for channel ID: {target_channel_id} by {ctx.author}")
+    except Exception as e:
+        await ctx.send(f"Error enabling cleaner: {e}")
+        logger.error(f"Error enabling cleaner for channel ID: {target_channel_id}: {e}")
+
 
 
 @enable_cleaner.error
@@ -216,34 +243,47 @@ async def test_cleaner(ctx, time: str):
             return
 
         channel = ctx.channel
+        now = datetime.now(CET)  # timezone-aware
 
-        if time.lower() == 'all':
-            time_limit = None
-            await ctx.send("Deleting all messages in the channel.")
+        # handle 'last...' forms (e.g., last5m, last1h25m, last2d)
+        delta = parse_last_duration(time)
+        if delta:
+            start_time = now - delta
+            await ctx.send(f"Deleting messages from the last {delta}.")
             logger.info(
-                f"Testing cleaner: deleting all messages in channel {channel_id}")
-        else:
-            try:
-                hours = int(time)
-                now = datetime.now(CET)  # Use timezone-aware datetime
-                time_limit = now - timedelta(hours=hours)
-                await ctx.send(f"Deleting messages older than {hours} hours.")
-                logger.info(
-                    f"Testing cleaner: deleting messages older than {hours} hours in channel {channel_id}")
-            except ValueError:
-                await ctx.send("Invalid time. Please specify 'all' or a number of hours.")
-                logger.error(
-                    f"Invalid time specified by {ctx.author} for testcleaner: {time}")
-                return
+                f"Testing cleaner: deleting messages NEWER than {start_time.isoformat()} in channel {channel_id}")
+            deleted_count = await delete_messages(channel, older_than=None, newer_than=start_time)
+            await ctx.send(f"Test complete. Deleted {deleted_count} messages.")
+            logger.info(
+                f"Test cleaner completed (last…). Deleted {deleted_count} messages in channel {channel_id}")
+            return
 
-        deleted_count = await delete_messages(channel, time_limit)
-        await ctx.send(f"Test complete. Deleted {deleted_count} messages.")
-        logger.info(
-            f"Test cleaner completed. Deleted {deleted_count} messages in channel {channel_id}")
+        # Existing behavior: 'all'
+        if time.lower() == 'all':
+            await ctx.send("Deleting all messages in the channel.")
+            logger.info(f"Testing cleaner: deleting all messages in channel {channel_id}")
+            deleted_count = await delete_messages(channel, older_than=now, newer_than=datetime(1970, 1, 1, tzinfo=CET))
+            await ctx.send(f"Test complete. Deleted {deleted_count} messages.")
+            logger.info(f"Test cleaner completed. Deleted {deleted_count} messages in channel {channel_id}")
+            return
+
+        # Existing behavior: numeric hours => delete older than N hours
+        try:
+            hours = int(time)
+            time_limit = now - timedelta(hours=hours)
+            await ctx.send(f"Deleting messages older than {hours} hours.")
+            logger.info(
+                f"Testing cleaner: deleting messages older than {hours} hours in channel {channel_id}")
+            deleted_count = await delete_messages(channel, older_than=time_limit)
+            await ctx.send(f"Test complete. Deleted {deleted_count} messages.")
+            logger.info(
+                f"Test cleaner completed. Deleted {deleted_count} messages in channel {channel_id}")
+        except ValueError:
+            await ctx.send("Invalid time. Use 'all', a number of hours (e.g., `12`), or `last<Nd><Nh><Nm>` like `last35m`, `last1h25m`, `last2d`.")
+            logger.error(f"Invalid time specified by {ctx.author} for testcleaner: {time}")
     else:
         await ctx.send("You do not have the required permissions to use this command.")
-        logger.warning(
-            f"{ctx.author} tried to test cleaner without required permissions")
+        logger.warning(f"{ctx.author} tried to test cleaner without required permissions")
 
 
 @test_cleaner.error
@@ -308,9 +348,9 @@ async def cleaner_help(ctx):
     footer = "Feel free to ask for help if you need more information."
 
     help_text = (
-        "- `!enablecleaner CHANNEL_ID` - Enable the cleaner for a specific channel.\n"
+        "- `!enablecleaner [CHANNEL_ID]` - Enable the cleaner. If CHANNEL_ID is omitted, it enables in the current channel. Default interval: 24h.\n"
         "- `!setcleaningtime HOURS` - Set the cleaning interval for the current channel. HOURS must be between 1 and 72.\n"
-        "- `!testcleaner TIME` - Manually test the cleaner. TIME can be 'all' or a number of hours.\n"
+        "- `!testcleaner TIME` - Test run. TIME can be 'all', a number of hours (e.g., `12`), or `last<Nd><Nh><Nm>` like `last35m`, `last1h25m`, `last2d`.\n"
         "- `!cleanersetting` - Check if the cleaner is enabled for the current channel and the cleaning interval.\n"
         "- `!checkpermissions` - Check your permissions id.\n"
         "- `!listchannels` - List all channels + channel_id.\n"
@@ -344,21 +384,18 @@ async def cleaner_help_error(ctx, error):
         logger.error(f"An error occurred in cleaner_help: {error}")
 
 
-async def delete_messages(channel, time_limit):
+async def delete_messages(channel, older_than: datetime | None, newer_than: datetime | None = None):
     deleted_count = 0
     messages_to_delete = []
     before_message = None
 
-    # Page through history in batches of 100, retrying on 500 Internal Server Error
     while True:
         try:
-            # collect up to 100 messages before before_id
             page = []
             async for msg in channel.history(limit=100, before=before_message):
                 page.append(msg)
         except discord.errors.DiscordServerError as e:
             logger.warning(f"500 fetching history, retrying… ({e})")
-            # back off with a bit of jitter
             await asyncio.sleep(2 + random.random() * 3)
             continue
 
@@ -366,12 +403,16 @@ async def delete_messages(channel, time_limit):
             break
 
         for msg in page:
-            if time_limit is None or msg.created_at < time_limit:
+            cond_old = (older_than is not None and msg.created_at < older_than)
+            cond_new = (newer_than is not None and msg.created_at >= newer_than)
+            if older_than is None and newer_than is None:
+                # nothing to delete if no condition given
+                continue
+            if cond_old or cond_new:
                 messages_to_delete.append(msg)
 
         before_message = page[-1]
 
-    # Delete all gathered messages one by one
     for msg in messages_to_delete:
         try:
             await msg.delete()
@@ -380,7 +421,6 @@ async def delete_messages(channel, time_limit):
             logger.error(f"Forbidden deleting message {msg.id}")
         except discord.HTTPException as e:
             logger.error(f"HTTP error deleting message {msg.id}: {e}")
-        # stay under rate limits
         await asyncio.sleep(1)
 
     return deleted_count
