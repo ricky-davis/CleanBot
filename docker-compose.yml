@@ -3,10 +3,7 @@ services:
     build: .
     container_name: cleanbot
     volumes:
-      - cleanbot-data:/usr/src/app/data
+      - ./cleaner_state.json:/usr/src/app/cleaner_state.json
     env_file:
       - .env
     restart: unless-stopped
-
-volumes:
-  cleanbot-data:
