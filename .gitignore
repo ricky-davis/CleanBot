@@ -5,7 +5,7 @@ venv/
 .env
 
 # ─── Bot runtime state & caches ────────────────────────────────────────────────
-state.json
+cleaner_state.json
 *atomic*                 # any atomic‐write temp files
 
 # ─── Python bytecode & IDE cruft ───────────────────────────────────────────────
@@ -17,9 +17,6 @@ __pycache__/
 *.txt
 *.jpg
 !requirements.txt
-
-# ─── Ignore the state file ─────────────────────────────────────────────────────
-cleaner_state.json
 
 # ─── (optionally) lockfiles if you don't want to commit them ───────────────────
 # Pipfile.lock           # uncomment if you want to ignore Pipfile.lock too
