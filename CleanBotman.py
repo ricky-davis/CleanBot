@@ -37,8 +37,12 @@ CET = pytz.timezone('Europe/Stockholm')
 # File to store cleaner state
 STATE_FILE = 'cleaner_state.json'  # Update this path as needed
 
+
 # List of roles allowed to execute commands
-MODERATOR_ROLES = {"Admins", "Super Friends"}  # Add role names as needed
+MODERATOR_ROLES = {"Admin", "Super Friends"}  # Add role names as needed
+
+# Global flag: if True, bot will respond to non-mods; if False, bot is silent to non-mods
+RESPOND_TO_NON_MODS = False
 
 # Define cleaning interval and cooldowns
 CLEANING_INTERVAL_MINUTES = 15
@@ -194,8 +198,10 @@ def build_cleaner_loop():
 @bot.command(name='enablecleaner')
 @commands.cooldown(1, DEFAULT_COOLDOWN_SECONDS, commands.BucketType.user)
 async def enable_cleaner(ctx, channel: Optional[discord.TextChannel] = None):
+
     if not has_moderator_role(ctx):
-        await ctx.send("You do not have the required permissions to use this command.")
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
         logger.warning(f"{ctx.author} tried to enable cleaner without required permissions")
         return
 
@@ -255,7 +261,8 @@ async def set_cleaning_time(ctx, hours: int):
             await ctx.send(f"Cleaner is not enabled for channel ID: {channel_id}")
             logger.warning(f"{ctx.author} tried to set cleaning time for a channel that is not enabled: {channel_id}")
     else:
-        await ctx.send("You do not have the required permissions to use this command.")
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
         logger.warning(f"{ctx.author} tried to set cleaning time without required permissions")
 
 @set_cleaning_time.error
@@ -311,7 +318,8 @@ async def test_cleaner(ctx, time: str):
             await ctx.send("Invalid time. Use 'all', a number of hours (e.g., `12`), or `last<Nd><Nh><Nm>` like `last35m`, `last1h25m`, `last2d`.")
             logger.error(f"Invalid time specified by {ctx.author} for testcleaner: {time}")
     else:
-        await ctx.send("You do not have the required permissions to use this command.")
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
         logger.warning(f"{ctx.author} tried to test cleaner without required permissions")
 
 @test_cleaner.error
@@ -358,14 +366,17 @@ async def list_channels(ctx):
         await ctx.send(f"Channels in this guild:\n{channels_info}")
         logger.info(f"{ctx.author} listed channels in guild {guild.id}")
     else:
-        await ctx.send("You do not have the required permissions to use this command.")
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
         logger.warning(f"{ctx.author} tried to list channels without required permissions")
 
 @bot.command(name='disablecleaner')
 @commands.cooldown(1, DEFAULT_COOLDOWN_SECONDS, commands.BucketType.user)
 async def disable_cleaner(ctx, channel: Optional[discord.TextChannel] = None):
+
     if not has_moderator_role(ctx):
-        await ctx.send("You do not have the required permissions to use this command.")
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
         logger.warning(f"{ctx.author} tried to disable cleaner without required permissions")
         return
 
