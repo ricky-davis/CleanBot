@@ -44,6 +44,9 @@ MODERATOR_ROLES = {"Admin", "Super Friends"}  # Add role names as needed
 # Global flag: if True, bot will respond to non-mods; if False, bot is silent to non-mods
 RESPOND_TO_NON_MODS = False
 
+# Global flag: if True, bot will wait before starting the cleaning loop
+START_DELAY = False
+
 # Define cleaning interval and cooldowns
 CLEANING_INTERVAL_MINUTES = 15
 DEFAULT_COOLDOWN_SECONDS = 10
@@ -190,7 +193,8 @@ def build_cleaner_loop():
     async def _before():
         # ensure bot is ready, then delay one full interval before first run
         await bot.wait_until_ready()
-        await asyncio.sleep(CLEANING_INTERVAL_MINUTES * 60)
+        if START_DELAY:
+            await asyncio.sleep(CLEANING_INTERVAL_MINUTES * 60)
 
     return _loop
 
