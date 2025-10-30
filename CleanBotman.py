@@ -339,6 +339,11 @@ async def test_cleaner_error(ctx, error):
 @bot.command(name='cleanersetting')
 @commands.cooldown(1, DEFAULT_COOLDOWN_SECONDS, commands.BucketType.user)
 async def cleaner_setting(ctx):
+    if not has_moderator_role(ctx):
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
+        logger.warning(f"{ctx.author} tried to check cleaner setting without required permissions")
+        return
     channel_id = str(ctx.channel.id)
     if channel_id in state:
         time_to_keep = state[channel_id]['time_to_keep']
@@ -358,6 +363,11 @@ async def cleaner_setting_error(ctx, error):
 @bot.command(name='checkpermissions')
 @commands.cooldown(1, DEFAULT_COOLDOWN_SECONDS, commands.BucketType.user)
 async def check_permissions(ctx):
+    if not has_moderator_role(ctx):
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
+        logger.warning(f"{ctx.author} tried to check permissions without required permissions")
+        return
     permissions = ctx.author.guild_permissions
     await ctx.send(f"Your permissions: {permissions}")
     logger.info(f"{ctx.author} checked their permissions")
@@ -429,6 +439,11 @@ async def disable_cleaner_error(ctx, error):
 @bot.command(name='cleanerhelp')
 @commands.cooldown(1, HELP_COOLDOWN_SECONDS, commands.BucketType.user)
 async def cleaner_help(ctx):
+    if not has_moderator_role(ctx):
+        if RESPOND_TO_NON_MODS:
+            await ctx.send("You do not have the required permissions to use this command.")
+        logger.warning(f"{ctx.author} tried to use cleanerhelp without required permissions")
+        return
     header = "**Cleaner Bot Commands**\n\n"
     footer = "Feel free to ask for help if you need more information."
 
