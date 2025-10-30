@@ -81,6 +81,9 @@ state = load_state()
 # Initialize bot with intents
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+bot.help_command = None  # Disable default help command
+
+
 # Dictionary to store cleaning tasks for each channel
 cleaning_tasks = {}
 
